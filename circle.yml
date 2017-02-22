@@ -1,0 +1,11 @@
+machine:
+  pre:
+    - curl -sSf https://static.rust-lang.org/rustup.sh | sh -s -- -y --revision=1.15.1
+dependencies:
+  override:
+    - cargo fetch
+  cache_directories:
+    - "~/.cargo"
+test:
+    override:
+    - cargo test
