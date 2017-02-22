@@ -1,0 +1,15 @@
+[package]
+name = "serde-encrypted-value"
+version = "0.1.0"
+authors = ["Steven Fackler <sfackler@palantir.com>"]
+
+[dependencies]
+base64 = "0.3"
+error-chain = "0.8"
+openssl = "0.9"
+serde = "0.9"
+
+[dev-dependencies]
+serde_derive = "0.9"
+serde_json = "0.9"
+tempdir = "0.3"
