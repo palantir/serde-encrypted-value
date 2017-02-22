@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Tooling for deserialization of partially encrypted configuration files.
+//! A Serde deserializer which transparently decrypts embedded encrypted strings.
 //!
 //! Application configurations typically consist mostly of non-sensitive information, with a few
 //! bits of information that is sensitive such as authentication secrets or cookie encryption keys.
