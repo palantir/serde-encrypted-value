@@ -100,6 +100,7 @@ pub use deserializer::Deserializer;
 
 const KEY_PREFIX: &'static str = "AES:";
 const KEY_LEN: usize = 32;
+// This should be 12 - see https://github.com/palantir/encrypted-config-value/issues/55
 const IV_LEN: usize = 32;
 const TAG_LEN: usize = 16;
 
