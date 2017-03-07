@@ -1,5 +1,7 @@
 # serde-encrypted-value
 
+[Documentation](https://docs.rs/serde-encrypted-value)
+
 Serde deserializer which transparently decrypts embedded encrypted strings.
 
 Application configurations typically consist mostly of non-sensitive information, with a few
