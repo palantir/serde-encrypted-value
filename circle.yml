@@ -1,7 +1,11 @@
 machine:
   pre:
-    - sudo apt-get update; sudo apt-get install --only-upgrade -y libssl-dev
+    - sudo apt-get update; sudo apt-get install -y libssl-dev
     - curl -sSf https://static.rust-lang.org/rustup.sh | sh -s -- -y --revision=1.15.1
+# https://github.com/rust-lang/cargo/issues/2078#issuecomment-263027534
+checkout:
+  post:
+    - git config --global --unset url.ssh://git@github.com:.insteadof
 dependencies:
   override:
     - cargo fetch
