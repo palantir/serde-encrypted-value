@@ -80,25 +80,24 @@
 extern crate base64;
 extern crate openssl;
 extern crate serde;
+extern crate serde_json;
 
 #[macro_use]
 extern crate error_chain;
-
-#[cfg(test)]
-extern crate serde_json;
-#[cfg(test)]
-extern crate tempdir;
-
-#[cfg(test)]
 #[macro_use]
 extern crate serde_derive;
 
+#[cfg(test)]
+extern crate tempdir;
+
 use openssl::symm::{self, Cipher};
 use openssl::rand::rand_bytes;
+use serde::{ser, de, Serialize, Deserialize};
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
+use std::result::Result as StdResult;
 use std::str::FromStr;
 
 use errors::*;
@@ -107,8 +106,8 @@ pub use deserializer::Deserializer;
 
 const KEY_PREFIX: &'static str = "AES:";
 const KEY_LEN: usize = 32;
-// This should be 12 - see https://github.com/palantir/encrypted-config-value/issues/55
-const IV_LEN: usize = 32;
+const LEGACY_IV_LEN: usize = 32;
+const IV_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 
 mod deserializer;
@@ -116,6 +115,43 @@ mod deserializer;
 /// Errors
 pub mod errors {
     error_chain!{}
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum EncryptedValue {
+    #[serde(rename = "AES")]
+    Aes {
+        mode: AesMode,
+        #[serde(serialize_with = "base64_serialize", deserialize_with = "base64_deserialize")]
+        iv: Vec<u8>,
+        #[serde(serialize_with = "base64_serialize", deserialize_with = "base64_deserialize")]
+        ciphertext: Vec<u8>,
+        #[serde(serialize_with = "base64_serialize", deserialize_with = "base64_deserialize")]
+        tag: Vec<u8>,
+    },
+}
+
+fn base64_serialize<S>(buf: &Vec<u8>, s: S) -> StdResult<S::Ok, S::Error>
+    where S: ser::Serializer
+{
+    base64::encode(buf).serialize(s)
+}
+
+fn base64_deserialize<D>(d: D) -> StdResult<Vec<u8>, D::Error>
+    where D: de::Deserializer
+{
+    let s = String::deserialize(d)?;
+    base64::decode(&s).map_err(|_| {
+                                   de::Error::invalid_value(de::Unexpected::Str(&s),
+                                                            &"a base64 string")
+                               })
+}
+
+#[derive(Serialize, Deserialize)]
+enum AesMode {
+    #[serde(rename = "GCM")]
+    Gcm,
 }
 
 /// A key used to encrypt or decrypt values. It represents both an algorithm and a key.
@@ -131,7 +167,8 @@ impl Key {
     /// Creates a random AES key.
     pub fn random_aes() -> Result<Key> {
         let mut key = vec![0; KEY_LEN];
-        rand_bytes(&mut key).chain_err(|| "error generating random key")?;
+        rand_bytes(&mut key)
+            .chain_err(|| "error generating random key")?;
         Ok(Key(key))
     }
 
@@ -152,41 +189,60 @@ impl Key {
             }
         };
         let mut s = String::new();
-        file.read_to_string(&mut s).chain_err(|| "error reading key")?;
+        file.read_to_string(&mut s)
+            .chain_err(|| "error reading key")?;
         s.parse().map(Some)
     }
 
     /// Encrypts a string with this key.
     pub fn encrypt(&self, value: &str) -> Result<String> {
-        let mut iv = [0; IV_LEN];
-        rand_bytes(&mut iv).chain_err(|| "error generating nonce")?;
+        let mut iv = vec![0; IV_LEN];
+        rand_bytes(&mut iv)
+            .chain_err(|| "error generating nonce")?;
 
-        let mut tag = [0; TAG_LEN];
+        let mut tag = vec![0; TAG_LEN];
 
         let cipher = Cipher::aes_256_gcm();
         let ct = symm::encrypt_aead(cipher, &self.0, Some(&iv), &[], value.as_bytes(), &mut tag)
             .chain_err(|| "error encrypting value")?;
 
-        let value = iv.iter().chain(ct.iter()).chain(tag.iter()).cloned().collect::<Vec<_>>();
+        let value = EncryptedValue::Aes {
+            mode: AesMode::Gcm,
+            iv: iv,
+            ciphertext: ct,
+            tag: tag,
+        };
 
-        Ok(base64::encode(&value))
+        let value = serde_json::to_string(&value).unwrap();
+        Ok(base64::encode(value.as_bytes()))
     }
 
     /// Decrypts a string with this key.
     pub fn decrypt(&self, value: &str) -> Result<String> {
-        let value = base64::decode(&value).chain_err(|| "error decoding encrypted value")?;
+        let value = base64::decode(&value)
+            .chain_err(|| "error decoding encrypted value")?;
 
-        if value.len() < IV_LEN + TAG_LEN {
-            bail!("encrypted value too short");
-        }
+        let (iv, ct, tag)= match serde_json::from_slice(&value) {
+            Ok(EncryptedValue::Aes { mode: AesMode::Gcm, iv, ciphertext, tag }) => {
+                (iv, ciphertext, tag)
+            }
+            Err(_) => {
+                if value.len() < LEGACY_IV_LEN + TAG_LEN {
+                    bail!("encrypted value too short");
+                }
 
-        let (iv, value) = value.split_at(IV_LEN);
-        let (ct, tag) = value.split_at(value.len() - TAG_LEN);
+                let (iv, value) = value.split_at(LEGACY_IV_LEN);
+                let (ct, tag) = value.split_at(value.len() - TAG_LEN);
+
+                (iv.to_vec(), ct.to_vec(), tag.to_vec())
+            }
+        };
 
         let cipher = Cipher::aes_256_gcm();
-        let pt = symm::decrypt_aead(cipher, &self.0, Some(iv), &[], ct, tag)
+        let pt = symm::decrypt_aead(cipher, &self.0, Some(&iv), &[], &ct, &tag)
             .chain_err(|| "error decrypting value")?;
-        let pt = String::from_utf8(pt).chain_err(|| "error decrypting value")?;
+        let pt = String::from_utf8(pt)
+            .chain_err(|| "error decrypting value")?;
 
         Ok(pt)
     }
@@ -206,7 +262,8 @@ impl FromStr for Key {
             bail!("invalid key prefix");
         }
 
-        let key = base64::decode(&s[KEY_PREFIX.len()..]).chain_err(|| "error decoding key")?;
+        let key = base64::decode(&s[KEY_PREFIX.len()..])
+            .chain_err(|| "error decoding key")?;
         Ok(Key(key))
     }
 }
@@ -241,7 +298,7 @@ mod test {
     }
 
     #[test]
-    fn decrypt() {
+    fn decrypt_legacy() {
         let ct = "5BBfGvf90H6bApwfxUjNdoKRW1W+GZCbhBuBpzEogVBmQZyWFFxcKyf+UPV5FOhrw/wrVZyoL3npoDfYj\
                   PQV/zg0W/P9cVOw";
         let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
