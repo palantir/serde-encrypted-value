@@ -309,8 +309,20 @@ mod test {
     }
 
     #[test]
+    fn decrypt() {
+        let ct = "eyJ0eXBlIjoiQUVTIiwibW9kZSI6IkdDTSIsIml2IjoiUCtRQXM5aHo4VFJVOUpNLyIsImNpcGhlcnRle\
+                  HQiOiJmUGpDaDVuMkR0cklPSVNXSklLcVQzSUtRNUtONVI3LyIsInRhZyI6ImlJRFIzYUtER1UyK1Brej\
+                  NPSEdSL0E9PSJ9";
+        let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
+
+        let key: Key = KEY.parse().unwrap();
+        let actual = key.decrypt(ct).unwrap();
+        assert_eq!(actual, pt);
+    }
+
+    #[test]
     fn encrypt_decrypt() {
-        let key = Key::random_aes().unwrap();
+        let key: Key = Key::random_aes().unwrap();
         let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
         let ct = key.encrypt(pt).unwrap();
         let actual = key.decrypt(&ct).unwrap();
