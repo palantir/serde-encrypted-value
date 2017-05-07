@@ -92,12 +92,10 @@ extern crate tempdir;
 
 use openssl::symm::{self, Cipher};
 use openssl::rand::rand_bytes;
-use serde::{ser, de, Serialize, Deserialize};
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
-use std::result::Result as StdResult;
 use std::str::FromStr;
 
 use errors::*;
@@ -123,29 +121,35 @@ enum EncryptedValue {
     #[serde(rename = "AES")]
     Aes {
         mode: AesMode,
-        #[serde(serialize_with = "base64_serialize", deserialize_with = "base64_deserialize")]
+        #[serde(with = "serde_base64")]
         iv: Vec<u8>,
-        #[serde(serialize_with = "base64_serialize", deserialize_with = "base64_deserialize")]
+        #[serde(with = "serde_base64")]
         ciphertext: Vec<u8>,
-        #[serde(serialize_with = "base64_serialize", deserialize_with = "base64_deserialize")]
+        #[serde(with = "serde_base64")]
         tag: Vec<u8>,
     },
 }
 
-fn base64_serialize<S>(buf: &Vec<u8>, s: S) -> StdResult<S::Ok, S::Error>
-    where S: ser::Serializer
-{
-    base64::encode(buf).serialize(s)
-}
+mod serde_base64 {
+    use base64;
+    use serde::{Serialize, Serializer, Deserialize, Deserializer};
+    use serde::de;
 
-fn base64_deserialize<D>(d: D) -> StdResult<Vec<u8>, D::Error>
-    where D: de::Deserializer
-{
-    let s = String::deserialize(d)?;
-    base64::decode(&s).map_err(|_| {
-                                   de::Error::invalid_value(de::Unexpected::Str(&s),
-                                                            &"a base64 string")
-                               })
+    pub fn serialize<S>(buf: &Vec<u8>, s: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        base64::encode(buf).serialize(s)
+    }
+
+    pub fn deserialize<'a, D>(d: D) -> Result<Vec<u8>, D::Error>
+        where D: Deserializer<'a>
+    {
+        let s = String::deserialize(d)?;
+        base64::decode(&s).map_err(|_| {
+                                       de::Error::invalid_value(de::Unexpected::Str(&s),
+                                                                &"a base64 string")
+                                   })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -222,10 +226,13 @@ impl Key {
         let value = base64::decode(&value)
             .chain_err(|| "error decoding encrypted value")?;
 
-        let (iv, ct, tag)= match serde_json::from_slice(&value) {
-            Ok(EncryptedValue::Aes { mode: AesMode::Gcm, iv, ciphertext, tag }) => {
-                (iv, ciphertext, tag)
-            }
+        let (iv, ct, tag) = match serde_json::from_slice(&value) {
+            Ok(EncryptedValue::Aes {
+                   mode: AesMode::Gcm,
+                   iv,
+                   ciphertext,
+                   tag,
+               }) => (iv, ciphertext, tag),
             Err(_) => {
                 if value.len() < LEGACY_IV_LEN + TAG_LEN {
                     bail!("encrypted value too short");

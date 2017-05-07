@@ -9,12 +9,12 @@ documentation = "https://docs.rs/serde-encrypted-value/0.1.0/serde_encrypted_val
 readme = "README.md"
 
 [dependencies]
-base64 = "0.3"
+base64 = "0.5"
 error-chain = "0.8"
 openssl = "0.9"
-serde = "0.9"
-serde_derive = "0.9"
-serde_json = "0.9"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
 
 [dev-dependencies]
 tempdir = "0.3"
