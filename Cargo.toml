@@ -1,11 +1,11 @@
 [package]
 name = "serde-encrypted-value"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Steven Fackler <sfackler@palantir.com>"]
 license = "Apache-2.0"
 description = "A Serde Deserializer wrapper which transparently decrypts encrypted values"
 repository = "https://github.com/palantir/serde-encrypted-value"
-documentation = "https://docs.rs/serde-encrypted-value/0.1.0/serde_encrypted_value"
+documentation = "https://docs.rs/serde-encrypted-value/0.2.0/serde_encrypted_value"
 readme = "README.md"
 
 [dependencies]
