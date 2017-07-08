@@ -1,16 +1,23 @@
-machine:
-  pre:
-    - sudo apt-get update; sudo apt-get install -y libssl-dev
-    - curl -sSf https://static.rust-lang.org/rustup.sh | sh -s -- -y --revision=1.15.1
-# https://github.com/rust-lang/cargo/issues/2078#issuecomment-263027534
-checkout:
-  post:
-    - git config --global --unset url.ssh://git@github.com:.insteadof
-dependencies:
-  override:
-    - cargo fetch
-  cache_directories:
-    - "~/.cargo"
-test:
-    override:
-    - cargo test
+version: 2
+jobs:
+  build:
+    working_directory: ~/build
+    docker:
+      - image: jimmycuadra/rust:1.18.0
+    steps:
+      - checkout
+      - restore_cache:
+          key: registry
+      - run: cargo generate-lockfile
+      - save_cache:
+          key: registry-{{ epoch }}
+          paths:
+            - ~/.cargo/registry/index
+      - restore_cache:
+          key: dependencies-{{ checksum "Cargo.lock" }}
+      - run: cargo test
+      - save_cache:
+          key: dependencies-{{ checksum "Cargo.lock" }}
+          paths:
+            - target
+            - ~/.cargo/registry/cache
