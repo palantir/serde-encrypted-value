@@ -83,13 +83,12 @@ extern crate serde;
 extern crate serde_json;
 
 #[macro_use]
-extern crate error_chain;
-#[macro_use]
 extern crate serde_derive;
 
 #[cfg(test)]
 extern crate tempdir;
 
+use openssl::error::ErrorStack;
 use openssl::symm::{self, Cipher};
 use openssl::rand::rand_bytes;
 use std::fmt;
@@ -97,8 +96,9 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 use std::str::FromStr;
-
-use errors::*;
+use std::string::FromUtf8Error;
+use std::error;
+use std::result;
 
 pub use deserializer::Deserializer;
 
@@ -110,15 +110,52 @@ const TAG_LEN: usize = 16;
 
 mod deserializer;
 
-/// Errors
-pub mod errors {
-    error_chain!{}
+/// The reuslt type returned by this library.
+pub type Result<T> = result::Result<T, Error>;
+
+#[derive(Debug)]
+enum ErrorCause {
+    Openssl(ErrorStack),
+    Io(io::Error),
+    Base64(base64::DecodeError),
+    Utf8(FromUtf8Error),
+    BadPrefix,
+    TooShort,
+}
+
+/// The error type returned by this library.
+#[derive(Debug)]
+pub struct Error(Box<ErrorCause>);
+
+impl fmt::Display for Error {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self.0 {
+            ErrorCause::Openssl(ref e) => fmt::Display::fmt(e, fmt),
+            ErrorCause::Io(ref e) => fmt::Display::fmt(e, fmt),
+            ErrorCause::Base64(ref e) => fmt::Display::fmt(e, fmt),
+            ErrorCause::Utf8(ref e) => fmt::Display::fmt(e, fmt),
+            ErrorCause::BadPrefix => fmt.write_str("invalid key prefix"),
+            ErrorCause::TooShort => fmt.write_str("encrypted value too short"),
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn description(&self) -> &str {
+        match *self.0 {
+            ErrorCause::Openssl(ref e) => error::Error::description(e),
+            ErrorCause::Io(ref e) => error::Error::description(e),
+            ErrorCause::Base64(ref e) => error::Error::description(e),
+            ErrorCause::Utf8(ref e) => error::Error::description(e),
+            ErrorCause::BadPrefix => "invalid key prefix",
+            ErrorCause::TooShort => "encrypted value too short",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
 enum EncryptedValue {
-    #[serde(rename = "AES")]
     Aes {
         mode: AesMode,
         #[serde(with = "serde_base64")]
@@ -136,25 +173,26 @@ mod serde_base64 {
     use serde::de;
 
     pub fn serialize<S>(buf: &Vec<u8>, s: S) -> Result<S::Ok, S::Error>
-        where S: Serializer
+    where
+        S: Serializer,
     {
         base64::encode(buf).serialize(s)
     }
 
     pub fn deserialize<'a, D>(d: D) -> Result<Vec<u8>, D::Error>
-        where D: Deserializer<'a>
+    where
+        D: Deserializer<'a>,
     {
         let s = String::deserialize(d)?;
         base64::decode(&s).map_err(|_| {
-                                       de::Error::invalid_value(de::Unexpected::Str(&s),
-                                                                &"a base64 string")
-                                   })
+            de::Error::invalid_value(de::Unexpected::Str(&s), &"a base64 string")
+        })
     }
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum AesMode {
-    #[serde(rename = "GCM")]
     Gcm,
 }
 
@@ -171,8 +209,9 @@ impl Key {
     /// Creates a random AES key.
     pub fn random_aes() -> Result<Key> {
         let mut key = vec![0; KEY_LEN];
-        rand_bytes(&mut key)
-            .chain_err(|| "error generating random key")?;
+        rand_bytes(&mut key).map_err(|e| {
+            Error(Box::new(ErrorCause::Openssl(e)))
+        })?;
         Ok(Key(key))
     }
 
@@ -181,34 +220,33 @@ impl Key {
     /// If the file does not exist, `None` is returned. Otherwise, the contents of the file are
     /// parsed via `Key`'s `FromStr` implementation.
     pub fn from_file<P>(path: P) -> Result<Option<Key>>
-        where P: AsRef<Path>
+    where
+        P: AsRef<Path>,
     {
         let mut file = match File::open(path) {
             Ok(file) => file,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => {
-                // FIXME ew :(
-                Err(e).chain_err(|| "error opening key")?;
-                unreachable!();
-            }
+            Err(e) => return Err(Error(Box::new(ErrorCause::Io(e)))),
         };
         let mut s = String::new();
-        file.read_to_string(&mut s)
-            .chain_err(|| "error reading key")?;
+        file.read_to_string(&mut s).map_err(|e| {
+            Error(Box::new(ErrorCause::Io(e)))
+        })?;
         s.parse().map(Some)
     }
 
     /// Encrypts a string with this key.
     pub fn encrypt(&self, value: &str) -> Result<String> {
         let mut iv = vec![0; IV_LEN];
-        rand_bytes(&mut iv)
-            .chain_err(|| "error generating nonce")?;
+        rand_bytes(&mut iv).map_err(|e| {
+            Error(Box::new(ErrorCause::Openssl(e)))
+        })?;
 
         let mut tag = vec![0; TAG_LEN];
 
         let cipher = Cipher::aes_256_gcm();
         let ct = symm::encrypt_aead(cipher, &self.0, Some(&iv), &[], value.as_bytes(), &mut tag)
-            .chain_err(|| "error encrypting value")?;
+            .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
 
         let value = EncryptedValue::Aes {
             mode: AesMode::Gcm,
@@ -223,8 +261,9 @@ impl Key {
 
     /// Decrypts a string with this key.
     pub fn decrypt(&self, value: &str) -> Result<String> {
-        let value = base64::decode(&value)
-            .chain_err(|| "error decoding encrypted value")?;
+        let value = base64::decode(&value).map_err(|e| {
+            Error(Box::new(ErrorCause::Base64(e)))
+        })?;
 
         let (iv, ct, tag) = match serde_json::from_slice(&value) {
             Ok(EncryptedValue::Aes {
@@ -235,7 +274,7 @@ impl Key {
                }) => (iv, ciphertext, tag),
             Err(_) => {
                 if value.len() < LEGACY_IV_LEN + TAG_LEN {
-                    bail!("encrypted value too short");
+                    return Err(Error(Box::new(ErrorCause::TooShort)));
                 }
 
                 let (iv, value) = value.split_at(LEGACY_IV_LEN);
@@ -247,9 +286,10 @@ impl Key {
 
         let cipher = Cipher::aes_256_gcm();
         let pt = symm::decrypt_aead(cipher, &self.0, Some(&iv), &[], &ct, &tag)
-            .chain_err(|| "error decrypting value")?;
-        let pt = String::from_utf8(pt)
-            .chain_err(|| "error decrypting value")?;
+            .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
+        let pt = String::from_utf8(pt).map_err(|e| {
+            Error(Box::new(ErrorCause::Utf8(e)))
+        })?;
 
         Ok(pt)
     }
@@ -266,11 +306,12 @@ impl FromStr for Key {
 
     fn from_str(s: &str) -> Result<Key> {
         if !s.starts_with(KEY_PREFIX) {
-            bail!("invalid key prefix");
+            return Err(Error(Box::new(ErrorCause::BadPrefix)));
         }
 
-        let key = base64::decode(&s[KEY_PREFIX.len()..])
-            .chain_err(|| "error decoding key")?;
+        let key = base64::decode(&s[KEY_PREFIX.len()..]).map_err(|e| {
+            Error(Box::new(ErrorCause::Base64(e)))
+        })?;
         Ok(Key(key))
     }
 }
