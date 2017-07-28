@@ -9,7 +9,7 @@ documentation = "https://docs.rs/serde-encrypted-value/0.2.0/serde_encrypted_val
 readme = "README.md"
 
 [dependencies]
-base64 = "0.5"
+base64 = "0.6"
 openssl = "0.9"
 serde = "1.0"
 serde_derive = "1.0"
