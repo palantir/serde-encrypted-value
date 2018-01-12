@@ -75,7 +75,7 @@
 //! }
 //! ```
 #![warn(missing_docs)]
-#![doc(html_root_url="https://docs.rs/serde-encrypted-value/0.2.0")]
+#![doc(html_root_url="https://docs.rs/serde-encrypted-value/0.3")]
 
 extern crate base64;
 extern crate openssl;
