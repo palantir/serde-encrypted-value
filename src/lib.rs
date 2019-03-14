@@ -77,17 +77,6 @@
 #![warn(missing_docs)]
 #![doc(html_root_url="https://docs.rs/serde-encrypted-value/0.3")]
 
-extern crate base64;
-extern crate openssl;
-extern crate serde;
-extern crate serde_json;
-
-#[macro_use]
-extern crate serde_derive;
-
-#[cfg(test)]
-extern crate tempdir;
-
 use openssl::error::ErrorStack;
 use openssl::symm::{self, Cipher};
 use openssl::rand::rand_bytes;
@@ -99,8 +88,9 @@ use std::str::FromStr;
 use std::string::FromUtf8Error;
 use std::error;
 use std::result;
+use serde::{Serialize, Deserialize};
 
-pub use deserializer::Deserializer;
+pub use crate::deserializer::Deserializer;
 
 const KEY_PREFIX: &'static str = "AES:";
 const KEY_LEN: usize = 32;
@@ -128,7 +118,7 @@ enum ErrorCause {
 pub struct Error(Box<ErrorCause>);
 
 impl fmt::Display for Error {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self.0 {
             ErrorCause::Openssl(ref e) => fmt::Display::fmt(e, fmt),
             ErrorCause::Io(ref e) => fmt::Display::fmt(e, fmt),
@@ -296,7 +286,7 @@ impl Key {
 }
 
 impl fmt::Display for Key {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "AES:{}", base64::encode(&self.0))
     }
 }

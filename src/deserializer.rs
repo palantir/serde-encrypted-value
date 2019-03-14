@@ -15,7 +15,7 @@
 use serde::de;
 use std::fmt;
 
-use Key;
+use crate::Key;
 
 /// A deserializer which automatically decrypts strings.
 ///
@@ -134,7 +134,7 @@ impl<'a, 'de, V> de::Visitor<'de> for Visitor<'a, V>
 {
     type Value = V::Value;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.visitor.expecting(formatter)
     }
 
