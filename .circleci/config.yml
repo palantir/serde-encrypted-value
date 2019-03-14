@@ -28,10 +28,13 @@ jobs:
           RUSTFLAGS: -D warnings
     steps:
       - checkout
+      - run: rustup component add rustfmt clippy
       - *RESTORE_REGISTRY
       - run: cargo generate-lockfile
       - *SAVE_REGISTRY
       - run: rustc --version > ~/rust-version
       - *RESTORE_DEPS
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all-targets
       - run: cargo test
       - *SAVE_DEPS

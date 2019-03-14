@@ -34,8 +34,8 @@ where
     /// If `key` is `None`, deserialization will fail if an encrypted string is encountered.
     pub fn new(deserializer: D, key: Option<&'a Key>) -> Deserializer<'a, D> {
         Deserializer {
-            deserializer: deserializer,
-            key: key,
+            deserializer,
+            key,
         }
     }
 }
@@ -106,7 +106,7 @@ impl<'a, V> Visitor<'a, V> {
     where
         E: de::Error,
     {
-        if s.starts_with("${enc:") && s.ends_with("}") {
+        if s.starts_with("${enc:") && s.ends_with('}') {
             match self.key {
                 Some(key) => match key.decrypt(&s[6..s.len() - 1]) {
                     Ok(s) => Ok(Some(s)),
@@ -220,7 +220,7 @@ where
         V2: de::SeqAccess<'de>,
     {
         let visitor = Visitor {
-            visitor: visitor,
+            visitor,
             key: self.key,
         };
         self.visitor.visit_seq(visitor)
@@ -231,7 +231,7 @@ where
         V2: de::MapAccess<'de>,
     {
         let visitor = Visitor {
-            visitor: visitor,
+            visitor,
             key: self.key,
         };
         self.visitor.visit_map(visitor)
@@ -242,7 +242,7 @@ where
         V2: de::EnumAccess<'de>,
     {
         let visitor = Visitor {
-            visitor: visitor,
+            visitor,
             key: self.key,
         };
         self.visitor.visit_enum(visitor)
@@ -260,7 +260,7 @@ where
         T: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
-            seed: seed,
+            seed,
             key: self.key,
         };
         self.visitor.next_element_seed(seed)
@@ -282,7 +282,7 @@ where
         K: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
-            seed: seed,
+            seed,
             key: self.key,
         };
         self.visitor.next_key_seed(seed)
@@ -293,12 +293,13 @@ where
         T: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
-            seed: seed,
+            seed,
             key: self.key,
         };
         self.visitor.next_value_seed(seed)
     }
 
+    #[allow(clippy::type_complexity)]
     fn next_entry_seed<K, T>(
         &mut self,
         kseed: K,
@@ -331,12 +332,13 @@ where
     type Error = V::Error;
     type Variant = Visitor<'a, V::Variant>;
 
+    #[allow(clippy::type_complexity)]
     fn variant_seed<T>(self, seed: T) -> Result<(T::Value, Visitor<'a, V::Variant>), V::Error>
     where
         T: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
-            seed: seed,
+            seed,
             key: self.key,
         };
         match self.visitor.variant_seed(seed) {
@@ -367,7 +369,7 @@ where
         T: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
-            seed: seed,
+            seed,
             key: self.key,
         };
         self.visitor.newtype_variant_seed(seed)
@@ -378,7 +380,7 @@ where
         V2: de::Visitor<'de>,
     {
         let visitor = Visitor {
-            visitor: visitor,
+            visitor,
             key: self.key,
         };
         self.visitor.tuple_variant(len, visitor)
@@ -393,7 +395,7 @@ where
         V2: de::Visitor<'de>,
     {
         let visitor = Visitor {
-            visitor: visitor,
+            visitor,
             key: self.key,
         };
         self.visitor.struct_variant(fields, visitor)

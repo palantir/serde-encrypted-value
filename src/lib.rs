@@ -67,7 +67,7 @@
 //!     assert_eq!(config.non_secret_value, "hello, world!");
 //! }
 //! ```
-#![warn(missing_docs)]
+#![warn(missing_docs, clippy::all)]
 #![doc(html_root_url = "https://docs.rs/serde-encrypted-value/0.3")]
 
 use openssl::error::ErrorStack;
@@ -85,7 +85,7 @@ use std::string::FromUtf8Error;
 
 pub use crate::deserializer::Deserializer;
 
-const KEY_PREFIX: &'static str = "AES:";
+const KEY_PREFIX: &str = "AES:";
 const KEY_LEN: usize = 32;
 const LEGACY_IV_LEN: usize = 32;
 const IV_LEN: usize = 12;
@@ -155,7 +155,7 @@ mod serde_base64 {
     use serde::de;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub fn serialize<S>(buf: &Vec<u8>, s: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(buf: &[u8], s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -222,14 +222,15 @@ impl Key {
         let mut tag = vec![0; TAG_LEN];
 
         let cipher = Cipher::aes_256_gcm();
-        let ct = symm::encrypt_aead(cipher, &self.0, Some(&iv), &[], value.as_bytes(), &mut tag)
-            .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
+        let ciphertext =
+            symm::encrypt_aead(cipher, &self.0, Some(&iv), &[], value.as_bytes(), &mut tag)
+                .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
 
         let value = EncryptedValue::Aes {
             mode: AesMode::Gcm,
-            iv: iv,
-            ciphertext: ct,
-            tag: tag,
+            iv,
+            ciphertext,
+            tag,
         };
 
         let value = serde_json::to_string(&value).unwrap();
@@ -297,7 +298,7 @@ mod test {
 
     use super::*;
 
-    const KEY: &'static str = "AES:NwQZdNWsFmYMCNSQlfYPDJtFBgPzY8uZlFhMCLnxNQE=";
+    const KEY: &str = "AES:NwQZdNWsFmYMCNSQlfYPDJtFBgPzY8uZlFhMCLnxNQE=";
 
     #[test]
     fn from_file_aes() {
