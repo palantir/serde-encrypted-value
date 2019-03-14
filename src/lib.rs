@@ -37,13 +37,6 @@
 //! ```
 //!
 //! ```no_run
-//! extern crate serde;
-//! extern crate serde_json;
-//! extern crate serde_encrypted_value;
-//!
-//! #[macro_use]
-//! extern crate serde_derive;
-//!
 //! use serde::Deserialize;
 //! use std::io::Read;
 //! use std::fs::File;
@@ -309,7 +302,7 @@ impl FromStr for Key {
 #[cfg(test)]
 mod test {
     use serde::Deserialize;
-    use tempdir::TempDir;
+    use tempfile::tempdir;
     use std::fs::File;
     use std::io::Write;
 
@@ -319,7 +312,7 @@ mod test {
 
     #[test]
     fn from_file_aes() {
-        let dir = TempDir::new("from_file_aes").unwrap();
+        let dir = tempdir().unwrap();
         let path = dir.path().join("encrypted-config-value.key");
         let mut key = File::create(&path).unwrap();
         key.write_all(KEY.as_bytes()).unwrap();
@@ -329,7 +322,7 @@ mod test {
 
     #[test]
     fn from_file_empty() {
-        let dir = TempDir::new("from_file_aes").unwrap();
+        let dir = tempdir().unwrap();
         let path = dir.path().join("encrypted-config-value.key");
 
         assert!(Key::from_file(&path).unwrap().is_none());
