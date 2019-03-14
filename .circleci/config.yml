@@ -23,15 +23,18 @@ jobs:
   build:
     working_directory: ~/build
     docker:
-      - image: rust:1.20.0
+      - image: rust:1.33.0
         environment:
           RUSTFLAGS: -D warnings
     steps:
       - checkout
+      - run: rustup component add rustfmt clippy
       - *RESTORE_REGISTRY
       - run: cargo generate-lockfile
       - *SAVE_REGISTRY
       - run: rustc --version > ~/rust-version
       - *RESTORE_DEPS
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all-targets
       - run: cargo test
       - *SAVE_DEPS

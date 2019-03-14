@@ -37,13 +37,6 @@
 //! ```
 //!
 //! ```no_run
-//! extern crate serde;
-//! extern crate serde_json;
-//! extern crate serde_encrypted_value;
-//!
-//! #[macro_use]
-//! extern crate serde_derive;
-//!
 //! use serde::Deserialize;
 //! use std::io::Read;
 //! use std::fs::File;
@@ -74,35 +67,25 @@
 //!     assert_eq!(config.non_secret_value, "hello, world!");
 //! }
 //! ```
-#![warn(missing_docs)]
-#![doc(html_root_url="https://docs.rs/serde-encrypted-value/0.3")]
-
-extern crate base64;
-extern crate openssl;
-extern crate serde;
-extern crate serde_json;
-
-#[macro_use]
-extern crate serde_derive;
-
-#[cfg(test)]
-extern crate tempdir;
+#![warn(missing_docs, clippy::all)]
+#![doc(html_root_url = "https://docs.rs/serde-encrypted-value/0.3")]
 
 use openssl::error::ErrorStack;
-use openssl::symm::{self, Cipher};
 use openssl::rand::rand_bytes;
+use openssl::symm::{self, Cipher};
+use serde::{Deserialize, Serialize};
+use std::error;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
+use std::result;
 use std::str::FromStr;
 use std::string::FromUtf8Error;
-use std::error;
-use std::result;
 
-pub use deserializer::Deserializer;
+pub use crate::deserializer::Deserializer;
 
-const KEY_PREFIX: &'static str = "AES:";
+const KEY_PREFIX: &str = "AES:";
 const KEY_LEN: usize = 32;
 const LEGACY_IV_LEN: usize = 32;
 const IV_LEN: usize = 12;
@@ -128,7 +111,7 @@ enum ErrorCause {
 pub struct Error(Box<ErrorCause>);
 
 impl fmt::Display for Error {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self.0 {
             ErrorCause::Openssl(ref e) => fmt::Display::fmt(e, fmt),
             ErrorCause::Io(ref e) => fmt::Display::fmt(e, fmt),
@@ -169,10 +152,10 @@ enum EncryptedValue {
 
 mod serde_base64 {
     use base64;
-    use serde::{Serialize, Serializer, Deserialize, Deserializer};
     use serde::de;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub fn serialize<S>(buf: &Vec<u8>, s: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(buf: &[u8], s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -184,9 +167,8 @@ mod serde_base64 {
         D: Deserializer<'a>,
     {
         let s = String::deserialize(d)?;
-        base64::decode(&s).map_err(|_| {
-            de::Error::invalid_value(de::Unexpected::Str(&s), &"a base64 string")
-        })
+        base64::decode(&s)
+            .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(&s), &"a base64 string"))
     }
 }
 
@@ -209,9 +191,7 @@ impl Key {
     /// Creates a random AES key.
     pub fn random_aes() -> Result<Key> {
         let mut key = vec![0; KEY_LEN];
-        rand_bytes(&mut key).map_err(|e| {
-            Error(Box::new(ErrorCause::Openssl(e)))
-        })?;
+        rand_bytes(&mut key).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
         Ok(Key(key))
     }
 
@@ -229,30 +209,28 @@ impl Key {
             Err(e) => return Err(Error(Box::new(ErrorCause::Io(e)))),
         };
         let mut s = String::new();
-        file.read_to_string(&mut s).map_err(|e| {
-            Error(Box::new(ErrorCause::Io(e)))
-        })?;
+        file.read_to_string(&mut s)
+            .map_err(|e| Error(Box::new(ErrorCause::Io(e))))?;
         s.parse().map(Some)
     }
 
     /// Encrypts a string with this key.
     pub fn encrypt(&self, value: &str) -> Result<String> {
         let mut iv = vec![0; IV_LEN];
-        rand_bytes(&mut iv).map_err(|e| {
-            Error(Box::new(ErrorCause::Openssl(e)))
-        })?;
+        rand_bytes(&mut iv).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
 
         let mut tag = vec![0; TAG_LEN];
 
         let cipher = Cipher::aes_256_gcm();
-        let ct = symm::encrypt_aead(cipher, &self.0, Some(&iv), &[], value.as_bytes(), &mut tag)
-            .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
+        let ciphertext =
+            symm::encrypt_aead(cipher, &self.0, Some(&iv), &[], value.as_bytes(), &mut tag)
+                .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
 
         let value = EncryptedValue::Aes {
             mode: AesMode::Gcm,
-            iv: iv,
-            ciphertext: ct,
-            tag: tag,
+            iv,
+            ciphertext,
+            tag,
         };
 
         let value = serde_json::to_string(&value).unwrap();
@@ -261,17 +239,15 @@ impl Key {
 
     /// Decrypts a string with this key.
     pub fn decrypt(&self, value: &str) -> Result<String> {
-        let value = base64::decode(&value).map_err(|e| {
-            Error(Box::new(ErrorCause::Base64(e)))
-        })?;
+        let value = base64::decode(&value).map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
 
         let (iv, ct, tag) = match serde_json::from_slice(&value) {
             Ok(EncryptedValue::Aes {
-                   mode: AesMode::Gcm,
-                   iv,
-                   ciphertext,
-                   tag,
-               }) => (iv, ciphertext, tag),
+                mode: AesMode::Gcm,
+                iv,
+                ciphertext,
+                tag,
+            }) => (iv, ciphertext, tag),
             Err(_) => {
                 if value.len() < LEGACY_IV_LEN + TAG_LEN {
                     return Err(Error(Box::new(ErrorCause::TooShort)));
@@ -287,16 +263,14 @@ impl Key {
         let cipher = Cipher::aes_256_gcm();
         let pt = symm::decrypt_aead(cipher, &self.0, Some(&iv), &[], &ct, &tag)
             .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
-        let pt = String::from_utf8(pt).map_err(|e| {
-            Error(Box::new(ErrorCause::Utf8(e)))
-        })?;
+        let pt = String::from_utf8(pt).map_err(|e| Error(Box::new(ErrorCause::Utf8(e))))?;
 
         Ok(pt)
     }
 }
 
 impl fmt::Display for Key {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "AES:{}", base64::encode(&self.0))
     }
 }
@@ -309,9 +283,8 @@ impl FromStr for Key {
             return Err(Error(Box::new(ErrorCause::BadPrefix)));
         }
 
-        let key = base64::decode(&s[KEY_PREFIX.len()..]).map_err(|e| {
-            Error(Box::new(ErrorCause::Base64(e)))
-        })?;
+        let key = base64::decode(&s[KEY_PREFIX.len()..])
+            .map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
         Ok(Key(key))
     }
 }
@@ -319,17 +292,17 @@ impl FromStr for Key {
 #[cfg(test)]
 mod test {
     use serde::Deserialize;
-    use tempdir::TempDir;
     use std::fs::File;
     use std::io::Write;
+    use tempfile::tempdir;
 
     use super::*;
 
-    const KEY: &'static str = "AES:NwQZdNWsFmYMCNSQlfYPDJtFBgPzY8uZlFhMCLnxNQE=";
+    const KEY: &str = "AES:NwQZdNWsFmYMCNSQlfYPDJtFBgPzY8uZlFhMCLnxNQE=";
 
     #[test]
     fn from_file_aes() {
-        let dir = TempDir::new("from_file_aes").unwrap();
+        let dir = tempdir().unwrap();
         let path = dir.path().join("encrypted-config-value.key");
         let mut key = File::create(&path).unwrap();
         key.write_all(KEY.as_bytes()).unwrap();
@@ -339,7 +312,7 @@ mod test {
 
     #[test]
     fn from_file_empty() {
-        let dir = TempDir::new("from_file_aes").unwrap();
+        let dir = tempdir().unwrap();
         let path = dir.path().join("encrypted-config-value.key");
 
         assert!(Key::from_file(&path).unwrap().is_none());
@@ -347,8 +320,9 @@ mod test {
 
     #[test]
     fn decrypt_legacy() {
-        let ct = "5BBfGvf90H6bApwfxUjNdoKRW1W+GZCbhBuBpzEogVBmQZyWFFxcKyf+UPV5FOhrw/wrVZyoL3npoDfYj\
-                  PQV/zg0W/P9cVOw";
+        let ct =
+            "5BBfGvf90H6bApwfxUjNdoKRW1W+GZCbhBuBpzEogVBmQZyWFFxcKyf+UPV5FOhrw/wrVZyoL3npoDfYj\
+             PQV/zg0W/P9cVOw";
         let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
 
         let key: Key = KEY.parse().unwrap();
@@ -358,9 +332,10 @@ mod test {
 
     #[test]
     fn decrypt() {
-        let ct = "eyJ0eXBlIjoiQUVTIiwibW9kZSI6IkdDTSIsIml2IjoiUCtRQXM5aHo4VFJVOUpNLyIsImNpcGhlcnRle\
-                  HQiOiJmUGpDaDVuMkR0cklPSVNXSklLcVQzSUtRNUtONVI3LyIsInRhZyI6ImlJRFIzYUtER1UyK1Brej\
-                  NPSEdSL0E9PSJ9";
+        let ct =
+            "eyJ0eXBlIjoiQUVTIiwibW9kZSI6IkdDTSIsIml2IjoiUCtRQXM5aHo4VFJVOUpNLyIsImNpcGhlcnRle\
+             HQiOiJmUGpDaDVuMkR0cklPSVNXSklLcVQzSUtRNUtONVI3LyIsInRhZyI6ImlJRFIzYUtER1UyK1Brej\
+             NPSEdSL0E9PSJ9";
         let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
 
         let key: Key = KEY.parse().unwrap();

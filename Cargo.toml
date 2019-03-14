@@ -2,17 +2,17 @@
 name = "serde-encrypted-value"
 version = "0.3.1"
 authors = ["Steven Fackler <sfackler@palantir.com>"]
+edition = "2018"
 license = "Apache-2.0"
 description = "A Serde Deserializer wrapper which transparently decrypts encrypted values"
 repository = "https://github.com/palantir/serde-encrypted-value"
 readme = "README.md"
 
 [dependencies]
-base64 = "0.9"
+base64 = "0.10"
 openssl = "0.10"
-serde = "1.0"
-serde_derive = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [dev-dependencies]
-tempdir = "0.3"
+tempfile = "3.0"
