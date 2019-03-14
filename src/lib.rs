@@ -68,20 +68,20 @@
 //! }
 //! ```
 #![warn(missing_docs)]
-#![doc(html_root_url="https://docs.rs/serde-encrypted-value/0.3")]
+#![doc(html_root_url = "https://docs.rs/serde-encrypted-value/0.3")]
 
 use openssl::error::ErrorStack;
-use openssl::symm::{self, Cipher};
 use openssl::rand::rand_bytes;
+use openssl::symm::{self, Cipher};
+use serde::{Deserialize, Serialize};
+use std::error;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
+use std::result;
 use std::str::FromStr;
 use std::string::FromUtf8Error;
-use std::error;
-use std::result;
-use serde::{Serialize, Deserialize};
 
 pub use crate::deserializer::Deserializer;
 
@@ -152,8 +152,8 @@ enum EncryptedValue {
 
 mod serde_base64 {
     use base64;
-    use serde::{Serialize, Serializer, Deserialize, Deserializer};
     use serde::de;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(buf: &Vec<u8>, s: S) -> Result<S::Ok, S::Error>
     where
@@ -167,9 +167,8 @@ mod serde_base64 {
         D: Deserializer<'a>,
     {
         let s = String::deserialize(d)?;
-        base64::decode(&s).map_err(|_| {
-            de::Error::invalid_value(de::Unexpected::Str(&s), &"a base64 string")
-        })
+        base64::decode(&s)
+            .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(&s), &"a base64 string"))
     }
 }
 
@@ -192,9 +191,7 @@ impl Key {
     /// Creates a random AES key.
     pub fn random_aes() -> Result<Key> {
         let mut key = vec![0; KEY_LEN];
-        rand_bytes(&mut key).map_err(|e| {
-            Error(Box::new(ErrorCause::Openssl(e)))
-        })?;
+        rand_bytes(&mut key).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
         Ok(Key(key))
     }
 
@@ -212,18 +209,15 @@ impl Key {
             Err(e) => return Err(Error(Box::new(ErrorCause::Io(e)))),
         };
         let mut s = String::new();
-        file.read_to_string(&mut s).map_err(|e| {
-            Error(Box::new(ErrorCause::Io(e)))
-        })?;
+        file.read_to_string(&mut s)
+            .map_err(|e| Error(Box::new(ErrorCause::Io(e))))?;
         s.parse().map(Some)
     }
 
     /// Encrypts a string with this key.
     pub fn encrypt(&self, value: &str) -> Result<String> {
         let mut iv = vec![0; IV_LEN];
-        rand_bytes(&mut iv).map_err(|e| {
-            Error(Box::new(ErrorCause::Openssl(e)))
-        })?;
+        rand_bytes(&mut iv).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
 
         let mut tag = vec![0; TAG_LEN];
 
@@ -244,17 +238,15 @@ impl Key {
 
     /// Decrypts a string with this key.
     pub fn decrypt(&self, value: &str) -> Result<String> {
-        let value = base64::decode(&value).map_err(|e| {
-            Error(Box::new(ErrorCause::Base64(e)))
-        })?;
+        let value = base64::decode(&value).map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
 
         let (iv, ct, tag) = match serde_json::from_slice(&value) {
             Ok(EncryptedValue::Aes {
-                   mode: AesMode::Gcm,
-                   iv,
-                   ciphertext,
-                   tag,
-               }) => (iv, ciphertext, tag),
+                mode: AesMode::Gcm,
+                iv,
+                ciphertext,
+                tag,
+            }) => (iv, ciphertext, tag),
             Err(_) => {
                 if value.len() < LEGACY_IV_LEN + TAG_LEN {
                     return Err(Error(Box::new(ErrorCause::TooShort)));
@@ -270,9 +262,7 @@ impl Key {
         let cipher = Cipher::aes_256_gcm();
         let pt = symm::decrypt_aead(cipher, &self.0, Some(&iv), &[], &ct, &tag)
             .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
-        let pt = String::from_utf8(pt).map_err(|e| {
-            Error(Box::new(ErrorCause::Utf8(e)))
-        })?;
+        let pt = String::from_utf8(pt).map_err(|e| Error(Box::new(ErrorCause::Utf8(e))))?;
 
         Ok(pt)
     }
@@ -292,9 +282,8 @@ impl FromStr for Key {
             return Err(Error(Box::new(ErrorCause::BadPrefix)));
         }
 
-        let key = base64::decode(&s[KEY_PREFIX.len()..]).map_err(|e| {
-            Error(Box::new(ErrorCause::Base64(e)))
-        })?;
+        let key = base64::decode(&s[KEY_PREFIX.len()..])
+            .map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
         Ok(Key(key))
     }
 }
@@ -302,9 +291,9 @@ impl FromStr for Key {
 #[cfg(test)]
 mod test {
     use serde::Deserialize;
-    use tempfile::tempdir;
     use std::fs::File;
     use std::io::Write;
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -330,8 +319,9 @@ mod test {
 
     #[test]
     fn decrypt_legacy() {
-        let ct = "5BBfGvf90H6bApwfxUjNdoKRW1W+GZCbhBuBpzEogVBmQZyWFFxcKyf+UPV5FOhrw/wrVZyoL3npoDfYj\
-                  PQV/zg0W/P9cVOw";
+        let ct =
+            "5BBfGvf90H6bApwfxUjNdoKRW1W+GZCbhBuBpzEogVBmQZyWFFxcKyf+UPV5FOhrw/wrVZyoL3npoDfYj\
+             PQV/zg0W/P9cVOw";
         let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
 
         let key: Key = KEY.parse().unwrap();
@@ -341,9 +331,10 @@ mod test {
 
     #[test]
     fn decrypt() {
-        let ct = "eyJ0eXBlIjoiQUVTIiwibW9kZSI6IkdDTSIsIml2IjoiUCtRQXM5aHo4VFJVOUpNLyIsImNpcGhlcnRle\
-                  HQiOiJmUGpDaDVuMkR0cklPSVNXSklLcVQzSUtRNUtONVI3LyIsInRhZyI6ImlJRFIzYUtER1UyK1Brej\
-                  NPSEdSL0E9PSJ9";
+        let ct =
+            "eyJ0eXBlIjoiQUVTIiwibW9kZSI6IkdDTSIsIml2IjoiUCtRQXM5aHo4VFJVOUpNLyIsImNpcGhlcnRle\
+             HQiOiJmUGpDaDVuMkR0cklPSVNXSklLcVQzSUtRNUtONVI3LyIsInRhZyI6ImlJRFIzYUtER1UyK1Brej\
+             NPSEdSL0E9PSJ9";
         let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
 
         let key: Key = KEY.parse().unwrap();
