@@ -33,10 +33,7 @@ where
     ///
     /// If `key` is `None`, deserialization will fail if an encrypted string is encountered.
     pub fn new(deserializer: D, key: Option<&'a Key>) -> Deserializer<'a, D> {
-        Deserializer {
-            deserializer,
-            key,
-        }
+        Deserializer { deserializer, key }
     }
 }
 
