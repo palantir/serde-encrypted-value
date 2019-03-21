@@ -38,8 +38,7 @@
 //!
 //! ```no_run
 //! use serde::Deserialize;
-//! use std::io::Read;
-//! use std::fs::File;
+//! use std::fs;
 //!
 //! #[derive(Deserialize)]
 //! struct Config {
@@ -52,11 +51,7 @@
 //!     let key = serde_encrypted_value::Key::from_file(key)
 //!         .unwrap();
 //!
-//!     let mut config = vec![];
-//!     File::open("conf/config.json")
-//!         .unwrap()
-//!         .read_to_end(&mut config)
-//!         .unwrap();
+//!     let config = fs::read("conf/config.json").unwrap();
 //!
 //!     let mut deserializer = serde_json::Deserializer::from_slice(&config);
 //!     let deserializer = serde_encrypted_value::Deserializer::new(
@@ -76,8 +71,8 @@ use openssl::symm::{self, Cipher};
 use serde::{Deserialize, Serialize};
 use std::error;
 use std::fmt;
-use std::fs::File;
-use std::io::{self, Read};
+use std::fs;
+use std::io;
 use std::path::Path;
 use std::result;
 use std::str::FromStr;
@@ -104,6 +99,7 @@ enum ErrorCause {
     Utf8(FromUtf8Error),
     BadPrefix,
     TooShort,
+    KeyExhausted,
 }
 
 /// The error type returned by this library.
@@ -119,22 +115,12 @@ impl fmt::Display for Error {
             ErrorCause::Utf8(ref e) => fmt::Display::fmt(e, fmt),
             ErrorCause::BadPrefix => fmt.write_str("invalid key prefix"),
             ErrorCause::TooShort => fmt.write_str("encrypted value too short"),
+            ErrorCause::KeyExhausted => fmt.write_str("key cannot encrypt more than 2^64 values"),
         }
     }
 }
 
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        match *self.0 {
-            ErrorCause::Openssl(ref e) => error::Error::description(e),
-            ErrorCause::Io(ref e) => error::Error::description(e),
-            ErrorCause::Base64(ref e) => error::Error::description(e),
-            ErrorCause::Utf8(ref e) => error::Error::description(e),
-            ErrorCause::BadPrefix => "invalid key prefix",
-            ErrorCause::TooShort => "encrypted value too short",
-        }
-    }
-}
+impl error::Error for Error {}
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
@@ -178,53 +164,65 @@ enum AesMode {
     Gcm,
 }
 
+/// A marker type indicating that a key can only decrypt values.
+pub struct ReadOnly(());
+
+/// A marker type indicating that a key can both encrypt and decrypt values.
+pub struct ReadWrite {
+    // IVs are actually 12 bytes, but 8 is more than enough and easier to increment.
+    iv: u64,
+}
+
 /// A key used to encrypt or decrypt values. It represents both an algorithm and a key.
+///
+/// Keys which have been deserialized from a string or file cannot encrypt new values; only freshly
+/// created keys have that ability. This is indicated by the type parameter `T`.
 ///
 /// The canonical serialized representation of a `Key` is a string consisting of an algorithm
 /// identifier, followed by a `:`, followed by the base64 encoded bytes of the key. The `Display`
 /// and `FromStr` implementations serialize and deserialize in this format.
 ///
 /// The only algorithm currently supported is AES 256 GCM, which uses the identifier `AES`.
-pub struct Key(Vec<u8>);
+pub struct Key<T> {
+    key: Vec<u8>,
+    mode: T,
+}
 
-impl Key {
+impl Key<ReadWrite> {
     /// Creates a random AES key.
-    pub fn random_aes() -> Result<Key> {
+    pub fn random_aes() -> Result<Key<ReadWrite>> {
         let mut key = vec![0; KEY_LEN];
         rand_bytes(&mut key).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
-        Ok(Key(key))
-    }
 
-    /// A convenience function which deserializes a `Key` from a file.
-    ///
-    /// If the file does not exist, `None` is returned. Otherwise, the contents of the file are
-    /// parsed via `Key`'s `FromStr` implementation.
-    pub fn from_file<P>(path: P) -> Result<Option<Key>>
-    where
-        P: AsRef<Path>,
-    {
-        let mut file = match File::open(path) {
-            Ok(file) => file,
-            Err(ref e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(Error(Box::new(ErrorCause::Io(e)))),
-        };
-        let mut s = String::new();
-        file.read_to_string(&mut s)
-            .map_err(|e| Error(Box::new(ErrorCause::Io(e))))?;
-        s.parse().map(Some)
+        Ok(Key {
+            key,
+            mode: ReadWrite { iv: 0 },
+        })
     }
 
     /// Encrypts a string with this key.
-    pub fn encrypt(&self, value: &str) -> Result<String> {
+    pub fn encrypt(&mut self, value: &str) -> Result<String> {
+        let iv_num = self.mode.iv;
+        self.mode.iv = match self.mode.iv.checked_add(1) {
+            Some(v) => v,
+            None => return Err(Error(Box::new(ErrorCause::KeyExhausted))),
+        };
+
         let mut iv = vec![0; IV_LEN];
-        rand_bytes(&mut iv).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
+        iv[..8].copy_from_slice(&iv_num.to_le_bytes());
 
         let mut tag = vec![0; TAG_LEN];
 
         let cipher = Cipher::aes_256_gcm();
-        let ciphertext =
-            symm::encrypt_aead(cipher, &self.0, Some(&iv), &[], value.as_bytes(), &mut tag)
-                .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
+        let ciphertext = symm::encrypt_aead(
+            cipher,
+            &self.key,
+            Some(&iv),
+            &[],
+            value.as_bytes(),
+            &mut tag,
+        )
+        .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
 
         let value = EncryptedValue::Aes {
             mode: AesMode::Gcm,
@@ -236,7 +234,27 @@ impl Key {
         let value = serde_json::to_string(&value).unwrap();
         Ok(base64::encode(value.as_bytes()))
     }
+}
 
+impl Key<ReadOnly> {
+    /// A convenience function which deserializes a `Key` from a file.
+    ///
+    /// If the file does not exist, `None` is returned. Otherwise, the contents of the file are
+    /// parsed via `Key`'s `FromStr` implementation.
+    pub fn from_file<P>(path: P) -> Result<Option<Key<ReadOnly>>>
+    where
+        P: AsRef<Path>,
+    {
+        let s = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(Error(Box::new(ErrorCause::Io(e)))),
+        };
+        s.parse().map(Some)
+    }
+}
+
+impl<T> Key<T> {
     /// Decrypts a string with this key.
     pub fn decrypt(&self, value: &str) -> Result<String> {
         let value = base64::decode(&value).map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
@@ -261,7 +279,7 @@ impl Key {
         };
 
         let cipher = Cipher::aes_256_gcm();
-        let pt = symm::decrypt_aead(cipher, &self.0, Some(&iv), &[], &ct, &tag)
+        let pt = symm::decrypt_aead(cipher, &self.key, Some(&iv), &[], &ct, &tag)
             .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
         let pt = String::from_utf8(pt).map_err(|e| Error(Box::new(ErrorCause::Utf8(e))))?;
 
@@ -269,23 +287,27 @@ impl Key {
     }
 }
 
-impl fmt::Display for Key {
+impl<T> fmt::Display for Key<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "AES:{}", base64::encode(&self.0))
+        write!(fmt, "AES:{}", base64::encode(&self.key))
     }
 }
 
-impl FromStr for Key {
+impl FromStr for Key<ReadOnly> {
     type Err = Error;
 
-    fn from_str(s: &str) -> Result<Key> {
+    fn from_str(s: &str) -> Result<Key<ReadOnly>> {
         if !s.starts_with(KEY_PREFIX) {
             return Err(Error(Box::new(ErrorCause::BadPrefix)));
         }
 
         let key = base64::decode(&s[KEY_PREFIX.len()..])
             .map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
-        Ok(Key(key))
+
+        Ok(Key {
+            key,
+            mode: ReadOnly(()),
+        })
     }
 }
 
@@ -325,7 +347,7 @@ mod test {
              PQV/zg0W/P9cVOw";
         let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
 
-        let key: Key = KEY.parse().unwrap();
+        let key = KEY.parse::<Key<ReadOnly>>().unwrap();
         let actual = key.decrypt(ct).unwrap();
         assert_eq!(actual, pt);
     }
@@ -338,18 +360,27 @@ mod test {
              NPSEdSL0E9PSJ9";
         let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
 
-        let key: Key = KEY.parse().unwrap();
+        let key = KEY.parse::<Key<ReadOnly>>().unwrap();
         let actual = key.decrypt(ct).unwrap();
         assert_eq!(actual, pt);
     }
 
     #[test]
     fn encrypt_decrypt() {
-        let key: Key = Key::random_aes().unwrap();
+        let mut key = Key::random_aes().unwrap();
         let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
         let ct = key.encrypt(pt).unwrap();
         let actual = key.decrypt(&ct).unwrap();
         assert_eq!(pt, actual);
+    }
+
+    #[test]
+    fn unique_ivs() {
+        let mut key = Key::random_aes().unwrap();
+        let pt = "L/TqOWz7E4z0SoeiTYBrqbqu";
+        let ct1 = key.encrypt(pt).unwrap();
+        let ct2 = key.encrypt(pt).unwrap();
+        assert_ne!(ct1, ct2);
     }
 
     #[test]
