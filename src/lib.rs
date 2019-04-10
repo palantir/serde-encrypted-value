@@ -63,7 +63,7 @@
 //! }
 //! ```
 #![warn(missing_docs, clippy::all)]
-#![doc(html_root_url = "https://docs.rs/serde-encrypted-value/0.3")]
+#![doc(html_root_url = "https://docs.rs/serde-encrypted-value/0.4")]
 
 use openssl::error::ErrorStack;
 use openssl::rand::rand_bytes;
