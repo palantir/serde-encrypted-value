@@ -169,8 +169,14 @@ pub struct ReadOnly(());
 
 /// A marker type indicating that a key can both encrypt and decrypt values.
 pub struct ReadWrite {
-    // IVs are actually 12 bytes, but 8 is more than enough and easier to increment.
-    iv: u64,
+    // GCM IVs must never be reused for the same key, and unpredictability makes
+    // certain precomputation-based attacks more difficult:
+    // https://tools.ietf.org/html/rfc5084#section-4. To account for this, we
+    // use basically the same approach as TLSv1.3 - a random nonce generated per
+    // key that's XORed with a counter incremented per message:
+    // https://tools.ietf.org/html/rfc8446#section-5.3
+    iv: [u8; IV_LEN],
+    counter: u64,
 }
 
 /// A key used to encrypt or decrypt values. It represents both an algorithm and a key.
@@ -193,23 +199,27 @@ impl Key<ReadWrite> {
     pub fn random_aes() -> Result<Key<ReadWrite>> {
         let mut key = vec![0; KEY_LEN];
         rand_bytes(&mut key).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
+        let mut iv = [0; IV_LEN];
+        rand_bytes(&mut iv).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
 
         Ok(Key {
             key,
-            mode: ReadWrite { iv: 0 },
+            mode: ReadWrite { iv, counter: 0 },
         })
     }
 
     /// Encrypts a string with this key.
     pub fn encrypt(&mut self, value: &str) -> Result<String> {
-        let iv_num = self.mode.iv;
-        self.mode.iv = match self.mode.iv.checked_add(1) {
+        let counter = self.mode.counter;
+        self.mode.counter = match self.mode.counter.checked_add(1) {
             Some(v) => v,
             None => return Err(Error(Box::new(ErrorCause::KeyExhausted))),
         };
 
-        let mut iv = vec![0; IV_LEN];
-        iv[..8].copy_from_slice(&iv_num.to_le_bytes());
+        let mut iv = self.mode.iv.to_vec();
+        for (i, byte) in counter.to_le_bytes().iter().enumerate() {
+            iv[i] ^= *byte;
+        }
 
         let mut tag = vec![0; TAG_LEN];
 
