@@ -20,19 +20,19 @@ use crate::Key;
 /// A deserializer which automatically decrypts strings.
 ///
 /// Encrypted strings should be formatted like `${enc:<base64 ciphertext here>}`.
-pub struct Deserializer<'a, D, T> {
+pub struct Deserializer<'a, D> {
     deserializer: D,
-    key: Option<&'a Key<T>>,
+    key: Option<&'a Key>,
 }
 
-impl<'a, 'de, D, T> Deserializer<'a, D, T>
+impl<'a, 'de, D> Deserializer<'a, D>
 where
     D: de::Deserializer<'de>,
 {
     /// Creates a new `Deserializer` wrapping another deserializer and decrypting string values.
     ///
     /// If `key` is `None`, deserialization will fail if an encrypted string is encountered.
-    pub fn new(deserializer: D, key: Option<&'a Key<T>>) -> Deserializer<'a, D, T> {
+    pub fn new(deserializer: D, key: Option<&'a Key>) -> Deserializer<'a, D> {
         Deserializer { deserializer, key }
     }
 }
@@ -52,7 +52,7 @@ macro_rules! forward_deserialize {
     }
 }
 
-impl<'a, 'de, D, T> de::Deserializer<'de> for Deserializer<'a, D, T>
+impl<'a, 'de, D> de::Deserializer<'de> for Deserializer<'a, D>
 where
     D: de::Deserializer<'de>,
 {
@@ -93,12 +93,12 @@ where
     forward_deserialize!(deserialize_ignored_any);
 }
 
-struct Visitor<'a, V, T> {
+struct Visitor<'a, V> {
     visitor: V,
-    key: Option<&'a Key<T>>,
+    key: Option<&'a Key>,
 }
 
-impl<'a, V, T> Visitor<'a, V, T> {
+impl<'a, V> Visitor<'a, V> {
     fn expand_str<E>(&self, s: &str) -> Result<Option<String>, E>
     where
         E: de::Error,
@@ -127,7 +127,7 @@ macro_rules! forward_visit {
     }
 }
 
-impl<'a, 'de, V, T> de::Visitor<'de> for Visitor<'a, V, T>
+impl<'a, 'de, V> de::Visitor<'de> for Visitor<'a, V>
 where
     V: de::Visitor<'de>,
 {
@@ -246,15 +246,15 @@ where
     }
 }
 
-impl<'a, 'de, V, T> de::SeqAccess<'de> for Visitor<'a, V, T>
+impl<'a, 'de, V> de::SeqAccess<'de> for Visitor<'a, V>
 where
     V: de::SeqAccess<'de>,
 {
     type Error = V::Error;
 
-    fn next_element_seed<S>(&mut self, seed: S) -> Result<Option<S::Value>, V::Error>
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, V::Error>
     where
-        S: de::DeserializeSeed<'de>,
+        T: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
             seed,
@@ -268,15 +268,15 @@ where
     }
 }
 
-impl<'a, 'de, V, T> de::MapAccess<'de> for Visitor<'a, V, T>
+impl<'a, 'de, V> de::MapAccess<'de> for Visitor<'a, V>
 where
     V: de::MapAccess<'de>,
 {
     type Error = V::Error;
 
-    fn next_key_seed<S>(&mut self, seed: S) -> Result<Option<S::Value>, V::Error>
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, V::Error>
     where
-        S: de::DeserializeSeed<'de>,
+        K: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
             seed,
@@ -285,9 +285,9 @@ where
         self.visitor.next_key_seed(seed)
     }
 
-    fn next_value_seed<S>(&mut self, seed: S) -> Result<S::Value, V::Error>
+    fn next_value_seed<T>(&mut self, seed: T) -> Result<T::Value, V::Error>
     where
-        S: de::DeserializeSeed<'de>,
+        T: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
             seed,
@@ -297,14 +297,14 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    fn next_entry_seed<K, V2>(
+    fn next_entry_seed<K, T>(
         &mut self,
         kseed: K,
-        vseed: V2,
-    ) -> Result<Option<(K::Value, V2::Value)>, V::Error>
+        vseed: T,
+    ) -> Result<Option<(K::Value, T::Value)>, V::Error>
     where
         K: de::DeserializeSeed<'de>,
-        V2: de::DeserializeSeed<'de>,
+        T: de::DeserializeSeed<'de>,
     {
         let kseed = DeserializeSeed {
             seed: kseed,
@@ -322,17 +322,17 @@ where
     }
 }
 
-impl<'a, 'de, V, T> de::EnumAccess<'de> for Visitor<'a, V, T>
+impl<'a, 'de, V> de::EnumAccess<'de> for Visitor<'a, V>
 where
     V: de::EnumAccess<'de>,
 {
     type Error = V::Error;
-    type Variant = Visitor<'a, V::Variant, T>;
+    type Variant = Visitor<'a, V::Variant>;
 
     #[allow(clippy::type_complexity)]
-    fn variant_seed<S>(self, seed: S) -> Result<(S::Value, Visitor<'a, V::Variant, T>), V::Error>
+    fn variant_seed<T>(self, seed: T) -> Result<(T::Value, Visitor<'a, V::Variant>), V::Error>
     where
-        S: de::DeserializeSeed<'de>,
+        T: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
             seed,
@@ -351,7 +351,7 @@ where
     }
 }
 
-impl<'a, 'de, V, T> de::VariantAccess<'de> for Visitor<'a, V, T>
+impl<'a, 'de, V> de::VariantAccess<'de> for Visitor<'a, V>
 where
     V: de::VariantAccess<'de>,
 {
@@ -361,9 +361,9 @@ where
         self.visitor.unit_variant()
     }
 
-    fn newtype_variant_seed<S>(self, seed: S) -> Result<S::Value, V::Error>
+    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value, V::Error>
     where
-        S: de::DeserializeSeed<'de>,
+        T: de::DeserializeSeed<'de>,
     {
         let seed = DeserializeSeed {
             seed,
@@ -399,18 +399,18 @@ where
     }
 }
 
-struct DeserializeSeed<'a, S, T> {
-    seed: S,
-    key: Option<&'a Key<T>>,
+struct DeserializeSeed<'a, T> {
+    seed: T,
+    key: Option<&'a Key>,
 }
 
-impl<'a, 'de, S, T> de::DeserializeSeed<'de> for DeserializeSeed<'a, S, T>
+impl<'a, 'de, T> de::DeserializeSeed<'de> for DeserializeSeed<'a, T>
 where
-    S: de::DeserializeSeed<'de>,
+    T: de::DeserializeSeed<'de>,
 {
-    type Value = S::Value;
+    type Value = T::Value;
 
-    fn deserialize<D>(self, deserializer: D) -> Result<S::Value, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> Result<T::Value, D::Error>
     where
         D: de::Deserializer<'de>,
     {
