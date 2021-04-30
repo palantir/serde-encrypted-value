@@ -44,7 +44,7 @@ macro_rules! forward_deserialize {
             where V: de::Visitor<'de>
         {
             let visitor = Visitor {
-                visitor: visitor,
+                visitor,
                 key: self.key,
             };
             self.deserializer.$name($($arg,)* visitor)
