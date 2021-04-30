@@ -137,7 +137,6 @@ enum EncryptedValue {
 }
 
 mod serde_base64 {
-    use base64;
     use serde::de;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

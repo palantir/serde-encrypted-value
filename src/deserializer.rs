@@ -44,7 +44,7 @@ macro_rules! forward_deserialize {
             where V: de::Visitor<'de>
         {
             let visitor = Visitor {
-                visitor: visitor,
+                visitor,
                 key: self.key,
             };
             self.deserializer.$name($($arg,)* visitor)
@@ -120,11 +120,12 @@ impl<'a, V, T> Visitor<'a, V, T> {
 macro_rules! forward_visit {
     ($name:ident, $ty:ty) => {
         fn $name<E>(self, v: $ty) -> Result<V::Value, E>
-            where E: de::Error
+        where
+            E: de::Error,
         {
             self.visitor.$name(v)
         }
-    }
+    };
 }
 
 impl<'a, 'de, V, T> de::Visitor<'de> for Visitor<'a, V, T>
