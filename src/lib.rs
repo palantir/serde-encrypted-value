@@ -69,6 +69,7 @@ pub use crate::deserializer::Deserializer;
 use aes_gcm::aes::Aes256;
 use aes_gcm::{AeadInPlace, Aes256Gcm, NewAead, Nonce};
 use aes_gcm::{AesGcm, Tag};
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::error;
 use std::fmt;
@@ -159,6 +160,11 @@ mod serde_base64 {
     }
 }
 
+// Just some insurance that thread_rng is in fact a CSPRNG
+fn secure_rng() -> impl Rng + CryptoRng {
+    rand::thread_rng()
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum AesMode {
@@ -198,11 +204,10 @@ pub struct Key<T> {
 impl Key<ReadWrite> {
     /// Creates a random AES key.
     pub fn random_aes() -> Result<Key<ReadWrite>> {
-        // rand::random uses a CSPRNG
         Ok(Key {
-            key: rand::random(),
+            key: secure_rng().gen(),
             mode: ReadWrite {
-                iv: rand::random(),
+                iv: secure_rng().gen(),
                 counter: 0,
             },
         })
