@@ -67,7 +67,7 @@
 
 pub use crate::deserializer::Deserializer;
 use aes_gcm::aes::Aes256;
-use aes_gcm::{AeadInPlace, Aes256Gcm, NewAead, Nonce};
+use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit, Nonce};
 use aes_gcm::{AesGcm, Tag};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -227,8 +227,7 @@ impl Key<ReadWrite> {
         }
 
         let mut ciphertext = value.as_bytes().to_vec();
-        let tag = Aes256Gcm::new_from_slice(&self.key)
-            .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?
+        let tag = Aes256Gcm::new(&self.key.into())
             .encrypt_in_place_detached(&iv, &[], &mut ciphertext)
             .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?;
 
@@ -309,16 +308,14 @@ impl<T> Key<T> {
             Iv::Legacy(iv) => {
                 let iv = Nonce::from(iv);
 
-                LegacyAes256Gcm::new_from_slice(&self.key)
-                    .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?
+                LegacyAes256Gcm::new(&self.key.into())
                     .decrypt_in_place_detached(&iv, &[], &mut ct, &tag)
                     .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?;
             }
             Iv::Standard(iv) => {
                 let iv = Nonce::from(iv);
 
-                Aes256Gcm::new_from_slice(&self.key)
-                    .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?
+                Aes256Gcm::new(&self.key.into())
                     .decrypt_in_place_detached(&iv, &[], &mut ct, &tag)
                     .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?;
             }
