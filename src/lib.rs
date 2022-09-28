@@ -65,9 +65,11 @@
 #![warn(missing_docs, clippy::all)]
 #![doc(html_root_url = "https://docs.rs/serde-encrypted-value/0.4")]
 
-use openssl::error::ErrorStack;
-use openssl::rand::rand_bytes;
-use openssl::symm::{self, Cipher};
+pub use crate::deserializer::Deserializer;
+use aes_gcm::aes::Aes256;
+use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit, Nonce};
+use aes_gcm::{AesGcm, Tag};
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::error;
 use std::fmt;
@@ -77,14 +79,15 @@ use std::path::Path;
 use std::result;
 use std::str::FromStr;
 use std::string::FromUtf8Error;
-
-pub use crate::deserializer::Deserializer;
+use typenum::U32;
 
 const KEY_PREFIX: &str = "AES:";
 const KEY_LEN: usize = 32;
 const LEGACY_IV_LEN: usize = 32;
 const IV_LEN: usize = 12;
 const TAG_LEN: usize = 16;
+
+type LegacyAes256Gcm = AesGcm<Aes256, U32>;
 
 mod deserializer;
 
@@ -93,12 +96,12 @@ pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Debug)]
 enum ErrorCause {
-    Openssl(ErrorStack),
+    AesGcm(aes_gcm::Error),
     Io(io::Error),
     Base64(base64::DecodeError),
     Utf8(FromUtf8Error),
     BadPrefix,
-    TooShort,
+    InvalidLength,
     KeyExhausted,
 }
 
@@ -109,12 +112,12 @@ pub struct Error(Box<ErrorCause>);
 impl fmt::Display for Error {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self.0 {
-            ErrorCause::Openssl(ref e) => fmt::Display::fmt(e, fmt),
+            ErrorCause::AesGcm(ref e) => fmt::Display::fmt(e, fmt),
             ErrorCause::Io(ref e) => fmt::Display::fmt(e, fmt),
             ErrorCause::Base64(ref e) => fmt::Display::fmt(e, fmt),
             ErrorCause::Utf8(ref e) => fmt::Display::fmt(e, fmt),
             ErrorCause::BadPrefix => fmt.write_str("invalid key prefix"),
-            ErrorCause::TooShort => fmt.write_str("encrypted value too short"),
+            ErrorCause::InvalidLength => fmt.write_str("invalid encrypted value component length"),
             ErrorCause::KeyExhausted => fmt.write_str("key cannot encrypt more than 2^64 values"),
         }
     }
@@ -157,6 +160,11 @@ mod serde_base64 {
     }
 }
 
+// Just some insurance that thread_rng is in fact a CSPRNG
+fn secure_rng() -> impl Rng + CryptoRng {
+    rand::thread_rng()
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum AesMode {
@@ -189,21 +197,19 @@ pub struct ReadWrite {
 ///
 /// The only algorithm currently supported is AES 256 GCM, which uses the identifier `AES`.
 pub struct Key<T> {
-    key: Vec<u8>,
+    key: [u8; KEY_LEN],
     mode: T,
 }
 
 impl Key<ReadWrite> {
     /// Creates a random AES key.
     pub fn random_aes() -> Result<Key<ReadWrite>> {
-        let mut key = vec![0; KEY_LEN];
-        rand_bytes(&mut key).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
-        let mut iv = [0; IV_LEN];
-        rand_bytes(&mut iv).map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
-
         Ok(Key {
-            key,
-            mode: ReadWrite { iv, counter: 0 },
+            key: secure_rng().gen(),
+            mode: ReadWrite {
+                iv: secure_rng().gen(),
+                counter: 0,
+            },
         })
     }
 
@@ -215,29 +221,21 @@ impl Key<ReadWrite> {
             None => return Err(Error(Box::new(ErrorCause::KeyExhausted))),
         };
 
-        let mut iv = self.mode.iv.to_vec();
+        let mut iv = Nonce::from(self.mode.iv);
         for (i, byte) in counter.to_le_bytes().iter().enumerate() {
             iv[i] ^= *byte;
         }
 
-        let mut tag = vec![0; TAG_LEN];
-
-        let cipher = Cipher::aes_256_gcm();
-        let ciphertext = symm::encrypt_aead(
-            cipher,
-            &self.key,
-            Some(&iv),
-            &[],
-            value.as_bytes(),
-            &mut tag,
-        )
-        .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
+        let mut ciphertext = value.as_bytes().to_vec();
+        let tag = Aes256Gcm::new(&self.key.into())
+            .encrypt_in_place_detached(&iv, &[], &mut ciphertext)
+            .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?;
 
         let value = EncryptedValue::Aes {
             mode: AesMode::Gcm,
-            iv,
+            iv: iv.to_vec(),
             ciphertext,
-            tag,
+            tag: tag.to_vec(),
         };
 
         let value = serde_json::to_string(&value).unwrap();
@@ -268,29 +266,62 @@ impl<T> Key<T> {
     pub fn decrypt(&self, value: &str) -> Result<String> {
         let value = base64::decode(&value).map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
 
-        let (iv, ct, tag) = match serde_json::from_slice(&value) {
+        let (iv, mut ct, tag) = match serde_json::from_slice(&value) {
             Ok(EncryptedValue::Aes {
                 mode: AesMode::Gcm,
                 iv,
                 ciphertext,
                 tag,
-            }) => (iv, ciphertext, tag),
-            Err(_) => {
-                if value.len() < LEGACY_IV_LEN + TAG_LEN {
-                    return Err(Error(Box::new(ErrorCause::TooShort)));
+            }) => {
+                if iv.len() != IV_LEN || tag.len() != TAG_LEN {
+                    return Err(Error(Box::new(ErrorCause::InvalidLength)));
                 }
 
-                let (iv, value) = value.split_at(LEGACY_IV_LEN);
-                let (ct, tag) = value.split_at(value.len() - TAG_LEN);
+                let mut iv_arr = [0; IV_LEN];
+                iv_arr.copy_from_slice(&iv);
 
-                (iv.to_vec(), ct.to_vec(), tag.to_vec())
+                let mut tag_arr = [0; TAG_LEN];
+                tag_arr.copy_from_slice(&tag);
+
+                (Iv::Standard(iv_arr), ciphertext, tag_arr)
+            }
+            Err(_) => {
+                if value.len() < LEGACY_IV_LEN + TAG_LEN {
+                    return Err(Error(Box::new(ErrorCause::InvalidLength)));
+                }
+
+                let mut iv = [0; LEGACY_IV_LEN];
+                iv.copy_from_slice(&value[..LEGACY_IV_LEN]);
+
+                let ct = value[LEGACY_IV_LEN..value.len() - TAG_LEN].to_vec();
+
+                let mut tag = [0; TAG_LEN];
+                tag.copy_from_slice(&value[value.len() - TAG_LEN..]);
+
+                (Iv::Legacy(iv), ct, tag)
             }
         };
 
-        let cipher = Cipher::aes_256_gcm();
-        let pt = symm::decrypt_aead(cipher, &self.key, Some(&iv), &[], &ct, &tag)
-            .map_err(|e| Error(Box::new(ErrorCause::Openssl(e))))?;
-        let pt = String::from_utf8(pt).map_err(|e| Error(Box::new(ErrorCause::Utf8(e))))?;
+        let tag = Tag::from(tag);
+
+        match iv {
+            Iv::Legacy(iv) => {
+                let iv = Nonce::from(iv);
+
+                LegacyAes256Gcm::new(&self.key.into())
+                    .decrypt_in_place_detached(&iv, &[], &mut ct, &tag)
+                    .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?;
+            }
+            Iv::Standard(iv) => {
+                let iv = Nonce::from(iv);
+
+                Aes256Gcm::new(&self.key.into())
+                    .decrypt_in_place_detached(&iv, &[], &mut ct, &tag)
+                    .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?;
+            }
+        };
+
+        let pt = String::from_utf8(ct).map_err(|e| Error(Box::new(ErrorCause::Utf8(e))))?;
 
         Ok(pt)
     }
@@ -313,11 +344,23 @@ impl FromStr for Key<ReadOnly> {
         let key = base64::decode(&s[KEY_PREFIX.len()..])
             .map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
 
+        if key.len() != KEY_LEN {
+            return Err(Error(Box::new(ErrorCause::InvalidLength)));
+        }
+
+        let mut key_arr = [0; KEY_LEN];
+        key_arr.copy_from_slice(&key);
+
         Ok(Key {
-            key,
+            key: key_arr,
             mode: ReadOnly(()),
         })
     }
+}
+
+enum Iv {
+    Legacy([u8; LEGACY_IV_LEN]),
+    Standard([u8; IV_LEN]),
 }
 
 #[cfg(test)]
