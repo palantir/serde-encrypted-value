@@ -69,6 +69,7 @@ pub use crate::deserializer::Deserializer;
 use aes_gcm::aes::Aes256;
 use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit, Nonce};
 use aes_gcm::{AesGcm, Tag};
+use base64::display::Base64Display;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use rand::{CryptoRng, Rng};
@@ -336,7 +337,7 @@ impl<T> Key<T> {
 
 impl<T> fmt::Display for Key<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "AES:{}", STANDARD.encode(self.key))
+        write!(fmt, "AES:{}", Base64Display::new(&self.key, &STANDARD))
     }
 }
 
