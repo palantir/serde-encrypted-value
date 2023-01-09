@@ -107,7 +107,7 @@ impl<'a, V, T> Visitor<'a, V, T> {
             match self.key {
                 Some(key) => match key.decrypt(&s[6..s.len() - 1]) {
                     Ok(s) => Ok(Some(s)),
-                    Err(e) => Err(E::custom(&e.to_string())),
+                    Err(e) => Err(E::custom(e.to_string())),
                 },
                 None => Err(E::custom("missing encryption key")),
             }

@@ -69,6 +69,9 @@ pub use crate::deserializer::Deserializer;
 use aes_gcm::aes::Aes256;
 use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit, Nonce};
 use aes_gcm::{AesGcm, Tag};
+use base64::display::Base64Display;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::error;
@@ -140,6 +143,8 @@ enum EncryptedValue {
 }
 
 mod serde_base64 {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
     use serde::de;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -147,7 +152,7 @@ mod serde_base64 {
     where
         S: Serializer,
     {
-        base64::encode(buf).serialize(s)
+        STANDARD.encode(buf).serialize(s)
     }
 
     pub fn deserialize<'a, D>(d: D) -> Result<Vec<u8>, D::Error>
@@ -155,7 +160,8 @@ mod serde_base64 {
         D: Deserializer<'a>,
     {
         let s = String::deserialize(d)?;
-        base64::decode(&s)
+        STANDARD
+            .decode(&s)
             .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(&s), &"a base64 string"))
     }
 }
@@ -239,7 +245,7 @@ impl Key<ReadWrite> {
         };
 
         let value = serde_json::to_string(&value).unwrap();
-        Ok(base64::encode(value.as_bytes()))
+        Ok(STANDARD.encode(value.as_bytes()))
     }
 }
 
@@ -264,7 +270,9 @@ impl Key<ReadOnly> {
 impl<T> Key<T> {
     /// Decrypts a string with this key.
     pub fn decrypt(&self, value: &str) -> Result<String> {
-        let value = base64::decode(&value).map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
+        let value = STANDARD
+            .decode(value)
+            .map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
 
         let (iv, mut ct, tag) = match serde_json::from_slice(&value) {
             Ok(EncryptedValue::Aes {
@@ -329,7 +337,7 @@ impl<T> Key<T> {
 
 impl<T> fmt::Display for Key<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "AES:{}", base64::encode(&self.key))
+        write!(fmt, "AES:{}", Base64Display::new(&self.key, &STANDARD))
     }
 }
 
@@ -341,7 +349,8 @@ impl FromStr for Key<ReadOnly> {
             return Err(Error(Box::new(ErrorCause::BadPrefix)));
         }
 
-        let key = base64::decode(&s[KEY_PREFIX.len()..])
+        let key = STANDARD
+            .decode(&s[KEY_PREFIX.len()..])
             .map_err(|e| Error(Box::new(ErrorCause::Base64(e))))?;
 
         if key.len() != KEY_LEN {
@@ -389,7 +398,7 @@ mod test {
         let dir = tempdir().unwrap();
         let path = dir.path().join("encrypted-config-value.key");
 
-        assert!(Key::from_file(&path).unwrap().is_none());
+        assert!(Key::from_file(path).unwrap().is_none());
     }
 
     #[test]
