@@ -52,7 +52,7 @@ macro_rules! forward_deserialize {
     }
 }
 
-impl<'a, 'de, D, T> de::Deserializer<'de> for Deserializer<'a, D, T>
+impl<'de, D, T> de::Deserializer<'de> for Deserializer<'_, D, T>
 where
     D: de::Deserializer<'de>,
 {
@@ -98,7 +98,7 @@ struct Visitor<'a, V, T> {
     key: Option<&'a Key<T>>,
 }
 
-impl<'a, V, T> Visitor<'a, V, T> {
+impl<V, T> Visitor<'_, V, T> {
     fn expand_str<E>(&self, s: &str) -> Result<Option<String>, E>
     where
         E: de::Error,
@@ -128,7 +128,7 @@ macro_rules! forward_visit {
     };
 }
 
-impl<'a, 'de, V, T> de::Visitor<'de> for Visitor<'a, V, T>
+impl<'de, V, T> de::Visitor<'de> for Visitor<'_, V, T>
 where
     V: de::Visitor<'de>,
 {
@@ -247,7 +247,7 @@ where
     }
 }
 
-impl<'a, 'de, V, T> de::SeqAccess<'de> for Visitor<'a, V, T>
+impl<'de, V, T> de::SeqAccess<'de> for Visitor<'_, V, T>
 where
     V: de::SeqAccess<'de>,
 {
@@ -269,7 +269,7 @@ where
     }
 }
 
-impl<'a, 'de, V, T> de::MapAccess<'de> for Visitor<'a, V, T>
+impl<'de, V, T> de::MapAccess<'de> for Visitor<'_, V, T>
 where
     V: de::MapAccess<'de>,
 {
@@ -352,7 +352,7 @@ where
     }
 }
 
-impl<'a, 'de, V, T> de::VariantAccess<'de> for Visitor<'a, V, T>
+impl<'de, V, T> de::VariantAccess<'de> for Visitor<'_, V, T>
 where
     V: de::VariantAccess<'de>,
 {
@@ -405,7 +405,7 @@ struct DeserializeSeed<'a, S, T> {
     key: Option<&'a Key<T>>,
 }
 
-impl<'a, 'de, S, T> de::DeserializeSeed<'de> for DeserializeSeed<'a, S, T>
+impl<'de, S, T> de::DeserializeSeed<'de> for DeserializeSeed<'_, S, T>
 where
     S: de::DeserializeSeed<'de>,
 {

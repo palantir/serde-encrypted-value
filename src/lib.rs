@@ -46,24 +46,21 @@
 //!     non_secret_value: String,
 //! }
 //!
-//! fn main() {
-//!     let key = "conf/encrypted-config-value.key";
-//!     let key = serde_encrypted_value::Key::from_file(key)
-//!         .unwrap();
+//! let key = "conf/encrypted-config-value.key";
+//! let key = serde_encrypted_value::Key::from_file(key)
+//!     .unwrap();
 //!
-//!     let config = fs::read("conf/config.json").unwrap();
+//! let config = fs::read("conf/config.json").unwrap();
 //!
-//!     let mut deserializer = serde_json::Deserializer::from_slice(&config);
-//!     let deserializer = serde_encrypted_value::Deserializer::new(
-//!         &mut deserializer, key.as_ref());
-//!     let config = Config::deserialize(deserializer).unwrap();
+//! let mut deserializer = serde_json::Deserializer::from_slice(&config);
+//! let deserializer = serde_encrypted_value::Deserializer::new(
+//!     &mut deserializer, key.as_ref());
+//! let config = Config::deserialize(deserializer).unwrap();
 //!
-//!     assert_eq!(config.secret_value, "L/TqOWz7E4z0SoeiTYBrqbqu");
-//!     assert_eq!(config.non_secret_value, "hello, world!");
-//! }
+//! assert_eq!(config.secret_value, "L/TqOWz7E4z0SoeiTYBrqbqu");
+//! assert_eq!(config.non_secret_value, "hello, world!");
 //! ```
 #![warn(missing_docs, clippy::all)]
-#![doc(html_root_url = "https://docs.rs/serde-encrypted-value/0.4")]
 
 pub use crate::deserializer::Deserializer;
 use aes_gcm::aes::Aes256;
@@ -166,9 +163,9 @@ mod serde_base64 {
     }
 }
 
-// Just some insurance that thread_rng is in fact a CSPRNG
+// Just some insurance that rand::rng is in fact a CSPRNG
 fn secure_rng() -> impl Rng + CryptoRng {
-    rand::thread_rng()
+    rand::rng()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -211,9 +208,9 @@ impl Key<ReadWrite> {
     /// Creates a random AES key.
     pub fn random_aes() -> Result<Key<ReadWrite>> {
         Ok(Key {
-            key: secure_rng().gen(),
+            key: secure_rng().random(),
             mode: ReadWrite {
-                iv: secure_rng().gen(),
+                iv: secure_rng().random(),
                 counter: 0,
             },
         })
