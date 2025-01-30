@@ -1,0 +1,5 @@
+type: improvement
+improvement:
+  description: Update rand requirement from 0.8.5 to 0.9.0
+  links:
+  - https://github.com/palantir/serde-encrypted-value/pull/30
