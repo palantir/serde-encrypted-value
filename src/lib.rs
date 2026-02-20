@@ -69,7 +69,7 @@ use aes_gcm::{AesGcm, Tag};
 use base64::display::Base64Display;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngExt};
 use serde::{Deserialize, Serialize};
 use std::error;
 use std::fmt;
@@ -164,7 +164,7 @@ mod serde_base64 {
 }
 
 // Just some insurance that rand::rng is in fact a CSPRNG
-fn secure_rng() -> impl Rng + CryptoRng {
+fn secure_rng() -> impl CryptoRng {
     rand::rng()
 }
 
