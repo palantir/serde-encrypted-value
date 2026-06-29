@@ -63,8 +63,9 @@
 #![warn(missing_docs, clippy::all)]
 
 pub use crate::deserializer::Deserializer;
+use aes_gcm::aes::cipher::InOutBuf;
 use aes_gcm::aes::Aes256;
-use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit, Nonce};
+use aes_gcm::{AeadInOut, Aes256Gcm, KeyInit, Nonce};
 use aes_gcm::{AesGcm, Tag};
 use base64::display::Base64Display;
 use base64::engine::general_purpose::STANDARD;
@@ -231,7 +232,7 @@ impl Key<ReadWrite> {
 
         let mut ciphertext = value.as_bytes().to_vec();
         let tag = Aes256Gcm::new(&self.key.into())
-            .encrypt_in_place_detached(&iv, &[], &mut ciphertext)
+            .encrypt_inout_detached(&iv, &[], InOutBuf::from(&mut *ciphertext))
             .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?;
 
         let value = EncryptedValue::Aes {
@@ -314,14 +315,14 @@ impl<T> Key<T> {
                 let iv = Nonce::from(iv);
 
                 LegacyAes256Gcm::new(&self.key.into())
-                    .decrypt_in_place_detached(&iv, &[], &mut ct, &tag)
+                    .decrypt_inout_detached(&iv, &[], InOutBuf::from(&mut *ct), &tag)
                     .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?;
             }
             Iv::Standard(iv) => {
                 let iv = Nonce::from(iv);
 
                 Aes256Gcm::new(&self.key.into())
-                    .decrypt_in_place_detached(&iv, &[], &mut ct, &tag)
+                    .decrypt_inout_detached(&iv, &[], InOutBuf::from(&mut *ct), &tag)
                     .map_err(|e| Error(Box::new(ErrorCause::AesGcm(e))))?;
             }
         };
